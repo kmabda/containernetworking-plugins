@@ -26,6 +26,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 
@@ -177,6 +178,32 @@ func isString(i interface{}) bool {
 	return ok
 }
 
+func isSliceOfInterfaces(s interface{}) bool {
+	_, ok := s.([]interface{})
+	return ok
+}
+
+func getRoutes(fenv *subnetEnv, delegate map[string]interface{}) []types.Route {
+	routes := []types.Route{
+		types.Route{
+			Dst: *fenv.nw,
+		},
+	}
+	if hasKey(delegate, "additionalRoutes") && isSliceOfInterfaces(delegate["additionalRoutes"]) {
+		additionalRoutes := reflect.ValueOf(delegate["additionalRoutes"])
+		for i := 0; i < additionalRoutes.Len(); i++ {
+			subnet := additionalRoutes.Index(i).Interface()
+			if !isString(subnet) {
+				continue
+			}
+			if _, dst, err := net.ParseCIDR(subnet.(string)); err == nil {
+				routes = append(routes, types.Route{Dst: *dst})
+			}
+		}
+	}
+	return routes
+}
+
 func cmdAdd(args *skel.CmdArgs) error {
 	n, err := loadFlannelNetConf(args.StdinData)
 	if err != nil {
@@ -228,14 +255,11 @@ func cmdAdd(args *skel.CmdArgs) error {
 		n.Delegate["cniVersion"] = n.CNIVersion
 	}
 
+	routes := getRoutes(fenv, n.Delegate)
 	n.Delegate["ipam"] = map[string]interface{}{
 		"type":   "host-local",
 		"subnet": fenv.sn.String(),
-		"routes": []types.Route{
-			types.Route{
-				Dst: *fenv.nw,
-			},
-		},
+		"routes": routes,
 	}
 
 	return delegateAdd(args.ContainerID, n.DataDir, n.Delegate)
